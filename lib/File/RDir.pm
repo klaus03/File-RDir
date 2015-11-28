@@ -14,12 +14,36 @@ our @EXPORT = qw();
 
 sub new {
     my $pkg = shift;
-    my ($dir) = @_;
-    $dir =~ s{\\}'/'xmsg;
+    my ($root, $opt) = @_;
+    $root =~ s{\\}'/'xmsg;
 
-    opendir my $hdl, $dir or croak "Can't opendir '$dir' because $!";
+    my @PList;
 
-    my $self = { 'root' => $dir, 'ndir' => '', 'dlist' => [], 'hdl' => $hdl };
+    if (ref($opt) eq 'HASH' and defined($opt->{'prune'})) {
+        for (split m{;}xms, $opt->{'prune'}) {
+            my ($item, $mod) = m{\A ([^:]*) : ([A-Z]*)\z}xmsi ? ($1, $2) : ($_, '');
+
+            my $rstring = '';
+
+            for my $frag (split m{([\*\?])}xms, $item) {
+                if ($frag eq '*') {
+                    $rstring .= '.*?';
+                }
+                elsif ($frag eq '?') {
+                    $rstring .= '.';
+                }
+                else {
+                    $rstring .= quotemeta($frag);
+                }
+            }
+
+            push @PList, $mod =~ m{i}xmsi ? qr{\A $rstring \z}xmsi : qr{\A $rstring \z}xms;
+        }
+    }
+
+    opendir my $hdl, $root or croak "Can't opendir '$root' because $!";
+
+    my $self = { 'root' => $root, 'ndir' => '', 'dlist' => [], 'hdl' => $hdl, 'pl' => \@PList };
 
     bless $self, $pkg;
 }
@@ -48,11 +72,15 @@ sub match {
             redo LOOP1;
         }
 
-        redo LOOP1 if $ele eq '.' or $ele eq '..'; # <-- This is highly important !!!
-
         my $full_ele = $full_dir.'/'.$ele;
 
         if (-d $full_ele) {
+            redo LOOP1 if $ele eq '.' or $ele eq '..';
+
+            for my $p (@{$self->{'pl'}}) {
+                redo LOOP1 if $ele =~ $p;
+            }
+
             push @{$self->{'dlist'}}, $self->{'ndir'}.'/'.$ele;
             redo LOOP1;
         }
@@ -64,13 +92,13 @@ sub match {
 }
 
 sub read_rdir {
-    my ($dir) = @_;
+    my ($root, $opt) = @_;
 
     my @FList;
 
-    my $obj = File::RDir->new($dir);
+    my $iter = File::RDir->new($root, $opt);
 
-    while (defined(my $file = $obj->match)) {
+    while (defined(my $file = $iter->match)) {
         push @FList, $file;
     }
 
@@ -87,7 +115,13 @@ File::RDir - List directories and recurse into subdirectories.
 
 =head1 SYNOPSIS
 
-  use File::RDir;
+  use File::RDir qw(read_rdir);
+
+  my $iter = File::RDir->new('C:\Windows\System', { prune => '.git:i;dat*' });
+
+  while (defined(my $file = $iter->match)) {
+      # do stuff with $file...
+  }
 
 =head1 AUTHOR
 
